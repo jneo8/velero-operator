@@ -15,6 +15,7 @@ from velero import (
     AzureStorageProvider,
     BackupInfo,
     S3StorageProvider,
+    ScheduleInfo,
     VeleroBackupStatusError,
     VeleroError,
     VeleroRestoreStatusError,
@@ -963,7 +964,7 @@ def test_run_list_backups_action_success(
     mock_velero,
     mock_lightkube_client,
 ):
-    """Test the run_list_backups_action handler."""
+    """Test the run_list_backups_action handler returns backups and schedules."""
     # Arrange
     with (
         patch.object(
@@ -996,6 +997,30 @@ def test_run_list_backups_action_success(
                 start_timestamp="2023-01-02T00:00:00Z",
             ),
         ]
+        mock_velero.list_schedules.return_value = [
+            ScheduleInfo(
+                name="schedule1",
+                schedule="0 2 * * *",
+                phase="Enabled",
+                labels={
+                    "app": "app1",
+                    "endpoint": "endpoint1",
+                    "model": "model1",
+                },
+                paused=False,
+                last_backup="2023-01-01T02:00:00Z",
+            ),
+            ScheduleInfo(
+                name="schedule2",
+                schedule="*/5 * * * *",
+                phase="Enabled",
+                labels={
+                    "app": "app2",
+                },
+                paused=True,
+                last_backup=None,
+            ),
+        ]
         ctx = testing.Context(VeleroOperatorCharm)
 
         # Act
@@ -1003,6 +1028,7 @@ def test_run_list_backups_action_success(
 
         # Assert
         mock_velero.list_backups.assert_called_once()
+        mock_velero.list_schedules.assert_called_once()
         assert ctx.action_results.get("status") == "success"
         assert ctx.action_results.get("backups") == {
             "backup1-uid": {
@@ -1022,6 +1048,26 @@ def test_run_list_backups_action_success(
                 "phase": "InProgress",
                 "start-timestamp": "2023-01-02T00:00:00Z",
                 "completion-timestamp": None,
+            },
+        }
+        assert ctx.action_results.get("schedules") == {
+            "schedule1": {
+                "cron": "0 2 * * *",
+                "app": "app1",
+                "endpoint": "endpoint1",
+                "model": "model1",
+                "phase": "Enabled",
+                "paused": "false",
+                "last-backup": "2023-01-01T02:00:00Z",
+            },
+            "schedule2": {
+                "cron": "*/5 * * * *",
+                "app": "app2",
+                "endpoint": "N/A",
+                "model": "N/A",
+                "phase": "Enabled",
+                "paused": "true",
+                "last-backup": "N/A",
             },
         }
 
@@ -1072,7 +1118,7 @@ def test_run_list_backups_action_failed(
     mock_velero,
     mock_lightkube_client,
 ):
-    """Test the run_list_backups_action handler when an error occurs."""
+    """Test the run_list_backups_action handler when list_backups fails."""
     # Arrange
     with (
         patch.object(
@@ -1082,6 +1128,28 @@ def test_run_list_backups_action_failed(
         mock_storage_rel.return_value = StorageRelation.S3
         mock_velero.is_storage_configured.return_value = True
         mock_velero.list_backups.side_effect = VeleroError("Failed to list backups")
+        ctx = testing.Context(VeleroOperatorCharm)
+
+        # Act and Assert
+        with pytest.raises(testing.ActionFailed):
+            ctx.run(ctx.on.action("list-backups"), testing.State())
+
+
+def test_run_list_backups_action_list_schedules_failed(
+    mock_velero,
+    mock_lightkube_client,
+):
+    """Test the run_list_backups_action handler when list_schedules fails."""
+    # Arrange
+    with (
+        patch.object(
+            VeleroOperatorCharm, "storage_relation", new_callable=PropertyMock
+        ) as mock_storage_rel,
+    ):
+        mock_storage_rel.return_value = StorageRelation.S3
+        mock_velero.is_storage_configured.return_value = True
+        mock_velero.list_backups.return_value = []
+        mock_velero.list_schedules.side_effect = VeleroError("Failed to list schedules")
         ctx = testing.Context(VeleroOperatorCharm)
 
         # Act and Assert

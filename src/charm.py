@@ -40,6 +40,7 @@ from velero import (
     BackupInfo,
     ExistingResourcePolicy,
     S3StorageProvider,
+    ScheduleInfo,
     StorageProviderError,
     Velero,
     VeleroBackupStatusError,
@@ -299,15 +300,16 @@ class VeleroOperatorCharm(TypedCharmBase[CharmConfig]):
             event.fail("If 'endpoint' is provided, 'app' must also be provided")
             return
 
-        event.log("Listing backups...")
+        event.log("Listing backups and schedules...")
         try:
-            backups = self.velero.list_backups(
-                self.lightkube_client, labels={"app": app, "endpoint": endpoint, "model": model}
-            )
+            labels = {"app": app, "endpoint": endpoint, "model": model}
+            backups = self.velero.list_backups(self.lightkube_client, labels=labels)
+            schedules = self.velero.list_schedules(self.lightkube_client, labels=labels)
             event.set_results(
                 {
                     "status": "success",
                     "backups": self._backup_list_to_dict(backups),
+                    "schedules": self._schedule_list_to_dict(schedules),
                 }
             )
         except VeleroError as e:
@@ -478,6 +480,21 @@ class VeleroOperatorCharm(TypedCharmBase[CharmConfig]):
                 "phase": b.phase,
                 "start-timestamp": b.start_timestamp,
                 "completion-timestamp": b.completion_timestamp,
+            }
+        return result
+
+    def _schedule_list_to_dict(self, schedules: List[ScheduleInfo]) -> dict:
+        """Convert a list of ScheduleInfo objects to a dictionary, printable for action results."""
+        result = {}
+        for s in schedules:
+            result[s.name] = {
+                "cron": s.schedule,
+                "app": s.labels.get("app", "N/A"),
+                "endpoint": s.labels.get("endpoint", "N/A"),
+                "model": s.labels.get("model", "N/A"),
+                "phase": s.phase,
+                "paused": "true" if s.paused else "false",
+                "last-backup": s.last_backup or "N/A",
             }
         return result
 
