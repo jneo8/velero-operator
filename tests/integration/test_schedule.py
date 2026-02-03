@@ -18,6 +18,7 @@ from helpers import (
     is_relation_broken,
     is_relation_joined,
     k8s_list_velero_schedules,
+    run_charm_action,
 )
 from pytest_operator.plugin import OpsTest
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -125,6 +126,29 @@ async def test_relate_with_schedule(ops_test: OpsTest, lightkube_client):
         schedule.get("status", {}).get("lastSkipped") is not None
     ), "lastSkipped should be set (Velero resets skipImmediately to false after processing)"
     logger.info("Schedule CR created: %s", schedule["metadata"]["name"])
+
+
+@pytest.mark.abort_on_fail
+async def test_list_backups_includes_schedules(ops_test: OpsTest):
+    """Test that list-backups action returns schedules."""
+    logger.info("Testing list-backups action includes schedules")
+    model = get_model(ops_test)
+    unit = model.applications[APP_NAME].units[0]
+
+    result = await run_charm_action(unit, "list-backups", app=TEST_APP_NAME)
+
+    assert "schedules" in result, "list-backups should return 'schedules' key"
+    schedules = result["schedules"]
+    assert len(schedules) == 1, f"Expected 1 schedule, found {len(schedules)}"
+
+    # Check schedule details
+    schedule_name = list(schedules.keys())[0]
+    schedule_info = schedules[schedule_name]
+    assert schedule_info["cron"] == "*/5 * * * *", "Schedule cron mismatch"
+    assert schedule_info["app"] == TEST_APP_NAME, "Schedule app mismatch"
+    assert schedule_info["endpoint"] == TEST_APP_FIRST_RELATION_NAME, "Schedule endpoint mismatch"
+    assert schedule_info["paused"] == "false", "Schedule should not be paused"
+    logger.info("list-backups action returned schedule: %s", schedule_name)
 
 
 @pytest.mark.abort_on_fail
